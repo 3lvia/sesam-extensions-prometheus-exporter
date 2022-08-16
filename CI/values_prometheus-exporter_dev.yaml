@@ -29,3 +29,7 @@ env:
 service:
   port: 80
   targetPort: 8080
+
+ingress:
+  subdomain: 'prometheus-sesam-exporter'
+  path: '/'
