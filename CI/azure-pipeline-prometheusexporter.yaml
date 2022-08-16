@@ -40,7 +40,7 @@ stages:
     parameters:
       environment: dev
       name: prometheus-exporter
-      helmValuesFile: values_prometheus-export_dev.yaml
+      helmValuesFile: values_prometheus-exporter_dev.yaml
 
 #  - stage: DeployTest
 #    dependsOn: DeployDev
