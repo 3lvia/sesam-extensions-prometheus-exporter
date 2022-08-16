@@ -29,4 +29,5 @@ WORKDIR /app
 COPY --from=build /app/out .
 RUN chown --recursive application-user .
 USER application-user
+EXPOSE 8080
 ENTRYPOINT ["/app/prometheus-sesam-exporter", "-config.env"]
