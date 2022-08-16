@@ -1,23 +1,32 @@
-# Build
 FROM library/golang:1.18.5-alpine3.15 as build
 LABEL maintainer="feng.luan@elvia.no"
 
 ENV GO111MODULE=on
 
 WORKDIR /app
-COPY go.mod ./
-COPY go.sum ./
-Run go mod download
-Copy *.go ./
+COPY . .
+RUN go mod download \
+    && CGO_ENABLED=0 \
+    GOOS=linux GOARCH=amd64 \
+    go build \
+    -o ./out/prometheus-sesam-exporter
 
-RUN go build -o ./out/prometheus-sesam-exporter
 
-# Deploy
-FROM gcr.io/distroless/base-debian10
+FROM library/alpine:3.14 as runtime
+LABEL maintainer="feng.luan@elvia.no"
 
-WORKDIR /
+RUN addgroup application-group --gid 1001 \
+    && adduser application-user --uid 1001 \
+    --ingroup application-group \
+    --disabled-password
 
-COPY --from=build /app/out/prometheus-sesam-exporter /prometheus-sesam-exporter
-EXPOSE 8080
-USER nonroot:nonroot
-ENTRYPOINT ["/prometheus-sesam-exporter"]
+# RUN apk add \
+#     'apache2-utils>=2.4.51-r0' \
+#     'ca-certificates>=20191127-r5' \
+#     --no-cache
+
+WORKDIR /app
+COPY --from=build /app/out .
+RUN chown --recursive application-user .
+USER application-user
+ENTRYPOINT ["/app/prometheus-sesam-exporter", "-config.env"]

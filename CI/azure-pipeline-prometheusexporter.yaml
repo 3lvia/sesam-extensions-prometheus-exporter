@@ -1,0 +1,53 @@
+trigger:
+  - '*'
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+  containerregistry: 'ContainerRegistryElvia'
+  imagetag: $(Build.BuildNumber)
+  name: prometheus-exporter
+  namespace: sesam-extensions
+
+resources:
+  repositories:
+  - repository: templates
+    type: github
+    name: 3lvia/core-azure-devops-templates
+    endpoint: 3lvia
+
+stages:
+- stage: Build
+  jobs:
+  # - template: test.yaml@templates
+  #   parameters:
+  #     sonarcloudProjectKey: 'hes_linkware_southaidonhn'
+  #     sonarcloudProjectName: 'hes_linkware_southaidonhn'
+  #     #unitTestProjects: |
+  #     #  **/*Tests/*.csproj
+  #     #  !**/*IntegrationTests/*.csproj'
+
+  - template: build.yaml@templates
+    parameters:
+      dockerfile: "**/Dockerfile"
+
+- stage: DeployDev
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/trunk'))
+  jobs:
+  - template: deploy.yaml@templates
+    parameters:
+      environment: dev
+      name: prometheus-exporter
+      helmValuesFile: values_prometheus-export_dev.yaml
+
+#  - stage: DeployTest
+#    dependsOn: DeployDev
+#    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/trunk'))
+#    jobs:
+#    - template: deploy.yaml@templates
+#      parameters:
+#        environment: test
+#        name: prometheus-exporter
+#        helmValuesFile: values_prometheus-export_test.yaml

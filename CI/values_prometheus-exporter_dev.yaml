@@ -1,0 +1,31 @@
+name: prometheus-exporter
+namespace: sesam-extensions
+microserviceType: worker
+
+replicaCount: 1
+
+image:
+  repository: containerregistryelvia.azurecr.io/sesam-extensions-prometheus-exporter
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "200Mi"
+  limits:
+    cpu: "200m"
+    memory: "0.5Gi"
+
+env:
+  - name: VAULT_ADDR
+    value: "https://vault.dev-elvia.io"
+  - name: SESAM_HOST
+    value: "datahub-bc455335.sesam.cloud"
+  - name: HOST_DESC
+    value: "Demo node"
+  - name: HOST_JWT
+    # This will be valid only for one week for first testing
+    value: "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJpYXQiOjE2NjA2NzcyMDAuNzEyNDUzNCwiZXhwIjoxNjYyNTc3OTIwLCJ1c2VyX2lkIjoiNDU4NTEyYTctNmMzMi00OWU1LTkyNTUtYzNkNWQzMDFhOGFhIiwidXNlcl9wcm9maWxlIjp7ImVtYWlsIjoiZmVuZy5sdWFuQGVsdmlhLm5vIiwibmFtZSI6ImZlbmcubHVhbkBlbHZpYS5ubyIsInBpY3R1cmUiOiJodHRwczovL3MuZ3JhdmF0YXIuY29tL2F2YXRhci9lY2I3Yjg1YTk1NDM1YzNlNTQyNDIyMTA0YjgyYjdkYz9zPTQ4MCZyPXBnJmQ9aHR0cHMlM0ElMkYlMkZjZG4uYXV0aDAuY29tJTJGYXZhdGFycyUyRmZsLnBuZyJ9LCJ1c2VyX3ByaW5jaXBhbCI6Imdyb3VwOkV2ZXJ5b25lIiwicHJpbmNpcGFscyI6eyJiYzQ1NTMzNS05OTllLTRjMWUtYTQxYi0xOTY0ZmVhYjMyYjQiOlsiZ3JvdXA6QWRtaW4iXX0sImFwaV90b2tlbl9pZCI6IjYwYjA1ZjE5LThiM2QtNGY5Yy05ODU4LTdiMjE5YzViMzE1YSJ9.UC_Amm6NZGfb0NodWJvaPhgi1JlGJzAcVZuVeMQkAsgFD_J3SgkkUb0p6CeQ9YhDwkLt5PmWQ6YVA1lFPZKKoNu-4uh_O1ko6VPjXcAbZ5Wz-PLKzvBCi-RIpQNhICEBLNXbowSOQ8My_d0bgOSQaP0FzFetSUhv-gakpWJG0-nhgnpEERPdkZlt2GCTa7HCv1drft9mb2cRWD77BDoACIr-vmFodLJ7rYV6ymiCe3_hamgWjgIOK0CeNT9gTj0gOOlDWJO4k-TpprqdbLCsd4JRl16tGkDwUER-4RdNcnVDHXuVhg0_ne3AOOi2pgCJA3SIiBFERB-VvPARcOsq_g"
+
+service:
+  port: 80
+  targetPort: 8080

@@ -3,6 +3,7 @@ package main
 import (
   "github.com/prometheus/client_golang/prometheus"
   "github.com/prometheus/client_golang/prometheus/promhttp"
+  "github.com/3lvia/hn-config-lib-go/vault"
   "fmt"
   "flag"
   "io/ioutil"
@@ -203,23 +204,53 @@ var (
 )
 
 func main() {
-//  sesamconfig := Sesam {
-//    Host: "datahub-bc455335.sesam.cloud",
-//    Desc: "FengPrivate",
-//    Jwt: "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJpYXQiOjE2NTk0MzcyOTAuMTA1MTM4NSwiZXhwIjoxNjkwOTczMjA2LCJ1c2VyX2lkIjoiNDU4NTEyYTctNmMzMi00OWU1LTkyNTUtYzNkNWQzMDFhOGFhIiwidXNlcl9wcm9maWxlIjp7ImVtYWlsIjoiZmVuZy5sdWFuQGVsdmlhLm5vIiwibmFtZSI6ImZlbmcubHVhbkBlbHZpYS5ubyIsInBpY3R1cmUiOiJodHRwczovL3MuZ3JhdmF0YXIuY29tL2F2YXRhci9lY2I3Yjg1YTk1NDM1YzNlNTQyNDIyMTA0YjgyYjdkYz9zPTQ4MCZyPXBnJmQ9aHR0cHMlM0ElMkYlMkZjZG4uYXV0aDAuY29tJTJGYXZhdGFycyUyRmZsLnBuZyJ9LCJ1c2VyX3ByaW5jaXBhbCI6Imdyb3VwOkV2ZXJ5b25lIiwicHJpbmNpcGFscyI6eyJiYzQ1NTMzNS05OTllLTRjMWUtYTQxYi0xOTY0ZmVhYjMyYjQiOlsiZ3JvdXA6QWRtaW4iXX0sImFwaV90b2tlbl9pZCI6IjA4OWY1NDdjLTc0YzktNDI0MS1iZTIyLTNkNGM2MmY3NDFmMCJ9.U1xzZZ_EZ5kekQE9LpGAdRb5H9h9msiI2hJHfnqHGKrOk6CdKij2Jwd2l7Uao9KPR1uxCRqJqK6qxt7F5fHN6xPExw8hva-9NOBe_4jpOhAtS_ifSbNFrdvgcIUawpQeDheqYLoCXLd016MLjjfTrljdpPZejSfnRcgQ7_jIVxwm1R8xhh14Fbl5l269UaITI-YP8BT-gFNHWYfEYaNhmxDUEehE8QFrLegwMtq2fxtUT7gaG4NTHK4c4KQggiWmsxFGmMZ68DisdygWnbifh-UHRHmvcqLmuDqPzwObKgh_B7SB8OCCtDJG2y2eGdI5HsmMtt351JjiEmkSRYGkPw",
-//  }
-  var configFile string
-  flag.StringVar(&configFile, "config.file_path", "", "Path to environment file")
+  var configFile, vaultPath string
+  flag.StringVar(&configFile, "config.file_path", "", "Path to an environment file")
+  flag.StringVar(&vaultPath, "config.vault_path", "", "Path to a vault path")
+  envv := flag.Bool("config.env", false, "Get the setting from env variables")
   flag.Parse()
-  var b []byte
-  b, err :=ioutil.ReadFile(configFile)
-  if err != nil {
-    log.Fatalf("Failed to read config file: %s", err)
-    os.Exit(1)
-  }
-  if err := json.Unmarshal(b, &config); err != nil {
-    log.Fatalf("Invalid config file: %s", err)
-    os.Exit(1)
+  if configFile != "" {
+    var b []byte
+    b, err :=ioutil.ReadFile(configFile)
+    if err != nil {
+      log.Fatalf("Failed to read config file: %s", err)
+      os.Exit(1)
+    }
+    if err := json.Unmarshal(b, &config); err != nil {
+      log.Fatalf("Invalid config file: %s", err)
+      os.Exit(1)
+    }
+  } else if vaultPath != "" {
+    // TODO: will support vault later
+    vault, err := vault.New()
+    if err != nil {
+      log.Fatal(err)
+    }
+    secretData, err := vault.GetSecret(os.Getenv(vaultPath+"host"))
+    _, _ = secretData.GetData()["host"]
+  } else if *envv == true {
+    log.Printf("env\n")
+//    config = &ExporterConfig{
+//      SesamConfig {
+//        Host: os.Getenv("SESAM_HOST"),
+//        Desc: os.Getenv("HOST_DESC"),
+//        Jwt: os.Getenv("HOST_JWT"),
+//      },
+//    }
+    config.SesamConfig.Host = os.Getenv("SESAM_HOST")
+    if config.SesamConfig.Host == "" {
+      log.Fatal("SESAM_HOST is not defined in Env")
+    }
+    config.SesamConfig.Desc = os.Getenv("HOST_DESC")
+    if config.SesamConfig.Desc == "" {
+      log.Fatal("HOST_Desc is not defined in Env")
+    }
+    config.SesamConfig.Jwt = os.Getenv("HOST_JWT")
+    if config.SesamConfig.Jwt == "" {
+      log.Fatal("HOST_Jwt is not defined in Env")
+    }
+  } else {
+    log.Fatal("wrong arguments!")
   }
 
   fmt.Printf("start with %s(%s)\n", config.SesamConfig.Desc, config.SesamConfig.Host)
@@ -233,7 +264,7 @@ func main() {
       <html>
       <head><title>Elvia Prometheus Sesam Exporter</title></head>
       <body>
-      <h1>Sesam Exporter</h1>
+      <h1>Prometheus Exporter for Sesam (` + config.SesamConfig.Host + ` -- ` + config.SesamConfig.Desc + `)</h1>
       <p><a href='` + metricsPath + `'>Metrics</a></p>
       </body>
       </html>`))
