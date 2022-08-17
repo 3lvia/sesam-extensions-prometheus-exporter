@@ -1,0 +1,32 @@
+name: prometheus-exporter
+namespace: sesam-extensions
+microserviceType: worker
+
+replicaCount: 1
+
+image:
+  repository: containerregistryelvia.azurecr.io/sesam-extensions-prometheus-exporter
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "200Mi"
+  limits:
+    cpu: "200m"
+    memory: "0.5Gi"
+
+env:
+  - name: VAULT_ADDR
+    value: "https://vault.prod-elvia.io"
+  - name: ROLE
+    value: "prometheus-exporter"
+  - name: MOUNT_PATH
+    value: "kubernetes/runtimeservice/sesam-extensions/prometheus-exporter"
+
+service:
+  port: 80
+  targetPort: 8080
+
+ingress:
+  subdomain: 'prometheus-exporter'
+  path: '/'

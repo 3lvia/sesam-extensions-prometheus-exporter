@@ -42,12 +42,22 @@ stages:
       name: prometheus-exporter
       helmValuesFile: values_prometheus-exporter_dev.yaml
 
-#  - stage: DeployTest
-#    dependsOn: DeployDev
-#    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/trunk'))
-#    jobs:
-#    - template: deploy.yaml@templates
-#      parameters:
-#        environment: test
-#        name: prometheus-exporter
-#        helmValuesFile: values_prometheus-export_test.yaml
+- stage: DeployTest
+  dependsOn: DeployDev
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/trunk'))
+  jobs:
+  - template: deploy.yaml@templates
+    parameters:
+      environment: test
+      name: prometheus-exporter
+      helmValuesFile: values_prometheus-export_test.yaml
+
+- stage: DeployTest
+  dependsOn: DeployDev
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/trunk'))
+  jobs:
+  - template: deploy.yaml@templates
+    parameters:
+      environment: prod
+      name: prometheus-exporter
+      helmValuesFile: values_prometheus-export_prod.yaml
