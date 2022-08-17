@@ -1,2 +1,2 @@
-# sesam-extension-prometheus-exporter
+# sesam-extensions-prometheus-exporter
 Prometheus exporter for Sesam

@@ -12,6 +12,7 @@ import (
   "time"
   "log"
   "encoding/json"
+  "strings"
 )
 
 type ExporterConfig struct {
@@ -99,24 +100,34 @@ func (e *Exporter) HttpGet(relativeUrl string, client *http.Client, retryCount i
   if retryCount >= 3 {
     return nil
   }
-  url := fmt.Sprintf("https://%s/api/%s", e.host, relativeUrl)
+  var url string
+  if strings.HasPrefix(relativeUrl, "/") {
+    url = fmt.Sprintf("https://%s/api%s", e.host, relativeUrl)
+  } else {
+    url = fmt.Sprintf("https://%s/api/%s", e.host, relativeUrl)
+  }
+
   log.Printf("scraping %s", url)
   req, err := http.NewRequest(http.MethodGet, url, nil)
   if err != nil {
-    log.Fatalf("Error to create Request. %+v", err)
+    log.Printf("Error to create Request. %+v", err)
   }
   req.Header.Add("Accept", "application/json")
   req.Header.Add("Authorization", "bearer "+e.jwt)
   resp, err := client.Do(req)
   if err != nil {
-    log.Fatalf("Error to get /pipes. %+v", err)
+    log.Printf("Error to get /pipes. %+v", err)
+    time.Sleep(1 * time.Second)
+    return e.HttpGet(relativeUrl, client, retryCount+1)
   }
 
   defer resp.Body.Close()
 
   body, err := ioutil.ReadAll(resp.Body)
   if err != nil {
-    log.Fatalf("Error to parse response body. %+v", err)
+    log.Printf("Error to parse response body. %+v", err)
+    time.Sleep(1 * time.Second)
+    return e.HttpGet(relativeUrl, client, retryCount+1)
   }
 
   if resp.StatusCode != http.StatusOK {
@@ -204,56 +215,50 @@ var (
 )
 
 func main() {
-  var configFile, vaultPath string
+  var configFile string
   flag.StringVar(&configFile, "config.file_path", "", "Path to an environment file")
-  flag.StringVar(&vaultPath, "config.vault_path", "", "Path to a vault path")
+  vaultv := flag.Bool("config.vault", false, "Get secrets fra vault")
   envv := flag.Bool("config.env", false, "Get the setting from env variables")
   flag.Parse()
+
   if configFile != "" {
     var b []byte
     b, err :=ioutil.ReadFile(configFile)
     if err != nil {
       log.Fatalf("Failed to read config file: %s", err)
-      os.Exit(1)
     }
     if err := json.Unmarshal(b, &config); err != nil {
       log.Fatalf("Invalid config file: %s", err)
       os.Exit(1)
     }
-  } else if vaultPath != "" {
-    // TODO: will support vault later
-    vault, err := vault.New()
+  } else if *vaultv {
+    v, err := vault.New()
     if err != nil {
       log.Fatal(err)
     }
-    secretData, err := vault.GetSecret(os.Getenv(vaultPath+"host"))
-    _, _ = secretData.GetData()["host"]
+    secretsDep := &SesamSecrets{}
+    vault.RegisterDynamicSecretDependency(secretsDep, v, nil)
+    config.SesamConfig.Host = secretsDep.Host()
+    config.SesamConfig.Desc = secretsDep.Desc()
+    config.SesamConfig.Jwt = secretsDep.Jwt()
   } else if *envv == true {
-    log.Printf("env\n")
-//    config = &ExporterConfig{
-//      SesamConfig {
-//        Host: os.Getenv("SESAM_HOST"),
-//        Desc: os.Getenv("HOST_DESC"),
-//        Jwt: os.Getenv("HOST_JWT"),
-//      },
-//    }
     config.SesamConfig.Host = os.Getenv("SESAM_HOST")
-    if config.SesamConfig.Host == "" {
-      log.Fatal("SESAM_HOST is not defined in Env")
-    }
     config.SesamConfig.Desc = os.Getenv("HOST_DESC")
-    if config.SesamConfig.Desc == "" {
-      log.Fatal("HOST_Desc is not defined in Env")
-    }
     config.SesamConfig.Jwt = os.Getenv("HOST_JWT")
-    if config.SesamConfig.Jwt == "" {
-      log.Fatal("HOST_Jwt is not defined in Env")
-    }
   } else {
     log.Fatal("wrong arguments!")
   }
 
-  fmt.Printf("start with %s(%s)\n", config.SesamConfig.Desc, config.SesamConfig.Host)
+  if config.SesamConfig.Host == "" {
+    log.Fatal("SESAM_HOST is not defined...")
+  }
+  if config.SesamConfig.Desc == "" {
+    log.Fatal("HOST_Desc is not defined...")
+  }
+  if config.SesamConfig.Jwt == "" {
+    log.Fatal("HOST_Jwt is not defined...")
+  }
+  log.Printf("start with %s(%s)\n", config.SesamConfig.Desc, config.SesamConfig.Host)
 
   exporter := NewExport(config)
   prometheus.MustRegister(exporter)
