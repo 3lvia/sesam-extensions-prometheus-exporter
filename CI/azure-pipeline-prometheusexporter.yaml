@@ -52,8 +52,8 @@ stages:
       name: prometheus-exporter
       helmValuesFile: values_prometheus-export_test.yaml
 
-- stage: DeployTest
-  dependsOn: DeployDev
+- stage: DeployProd
+  dependsOn: DeployTest
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/trunk'))
   jobs:
   - template: deploy.yaml@templates
