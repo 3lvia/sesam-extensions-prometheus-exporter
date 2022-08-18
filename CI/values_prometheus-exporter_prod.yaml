@@ -17,7 +17,7 @@ resources:
 
 env:
   - name: VAULT_ADDR
-    value: "https://vault.prod-elvia.io"
+    value: "https://vault.elvia.io"
   - name: ROLE
     value: "prometheus-exporter"
   - name: MOUNT_PATH
