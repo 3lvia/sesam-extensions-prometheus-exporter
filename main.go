@@ -78,8 +78,11 @@ func NewExport(config ExporterConfig) *Exporter {
 
 //send the description of the defined metrics
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
-  ch <- node_storage_total_mb
+//   ch <- node_storage_total_mb
   ch <- pipe_storage_mb
+  ch <- output_deleted_total
+  ch <- output_existed_total
+  ch <- output_withdeleted_total
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
@@ -155,9 +158,9 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
       pipe_storage_mb, prometheus.GaugeValue, volumn, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
     )
   }
-  ch <- prometheus.MustNewConstMetric(
-    node_storage_total_mb, prometheus.GaugeValue, total, e.host,
-  )
+//  ch <- prometheus.MustNewConstMetric(
+//    node_storage_total_mb, prometheus.GaugeValue, total, e.host,
+//  )
   close(ch)
 }
 
@@ -166,9 +169,9 @@ func (e *Exporter) DatasetsState(client *http.Client, ch chan<-prometheus.Metric
   var datasetStates []DatasetState
   json.Unmarshal(e.HttpGet(url, client, 0), &datasetStates)
   for _, datasetState := range datasetStates {
-    ch <- prometheus.MustNewConstMetric(
-      output_undeleted_total, prometheus.GaugeValue, datasetState.Runtime.WithDeleted-datasetState.Runtime.Deleted, e.host, datasetState.Id,
-    )
+//    ch <- prometheus.MustNewConstMetric(
+//      output_undeleted_total, prometheus.GaugeValue, datasetState.Runtime.WithDeleted-datasetState.Runtime.Deleted, e.host, datasetState.Id,
+//    )
     ch <- prometheus.MustNewConstMetric(
       output_deleted_total, prometheus.GaugeValue, datasetState.Runtime.Deleted, e.host, datasetState.Id,
     )
@@ -188,10 +191,10 @@ var (
   namespace = "sesam"
   metricsPath = "/metrics"
 
-  node_storage_total_mb = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "node_storage_total_mb"),
-    "total storage (MB)", []string{"host"}, nil,
-  )
+//  node_storage_total_mb = prometheus.NewDesc(
+//    prometheus.BuildFQName(namespace, "",  "node_storage_total_mb"),
+//    "total storage (MB)", []string{"host"}, nil,
+//  )
   pipe_storage_mb = prometheus.NewDesc(
     prometheus.BuildFQName(namespace, "",  "pipe_storage_mb"),
     "pipe storage (MB)", []string{"host", "pipe", "configGroup"}, nil,
@@ -200,10 +203,10 @@ var (
     prometheus.BuildFQName(namespace, "",  "output_deleted_total"),
     "total deleted entities in the output index", []string{"host", "pipe"}, nil,
   )
-  output_undeleted_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "output_undeleted_total"),
-    "total undeleted entities in the output index", []string{"host", "pipe"}, nil,
-  )
+//  output_undeleted_total = prometheus.NewDesc(
+//    prometheus.BuildFQName(namespace, "",  "output_undeleted_total"),
+//    "total undeleted entities in the output index", []string{"host", "pipe"}, nil,
+//  )
   output_withdeleted_total = prometheus.NewDesc(
     prometheus.BuildFQName(namespace, "",  "output_withdeleted_total"),
     "total entities in the output index", []string{"host", "pipe"}, nil,
