@@ -47,6 +47,10 @@ type PipeState struct {
     }`json:"original"`
   }`json:"config"`
   Runtime struct {
+    Queues struct {
+      Source interface{} `json:"source"`
+      Dependencies map[string]float64 `json:"dependencies"`
+    }`json:"queues"`
     LastStarted string`json:"last-started"`
     LastRun string `json:"last-run"`
     NextRun string `json:"next-run"`
@@ -65,10 +69,6 @@ type DatasetState struct {
   Id string `json:"_id"`
   Runtime struct {
     LastModified time.Time `json:"last-modified"`
-    Queues struct {
-      Source float64 `json:"size"`
-      Index float64 `json:"index"`
-    }`json:"queues"`
     Deleted float64 `json:"count-index-deleted"`
     WithDeleted float64 `json:"count-index-exists"`
     Existed float64 `json:"count-log-exists"`
@@ -182,10 +182,26 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
     ch <- prometheus.MustNewConstMetric(
       pipe_storage_mb, prometheus.GaugeValue, volumn, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
     )
-    queueSize := 10.0
-    if queueSize == 0 { continue }
+    var queueSize float64
+    if v, ok := pipe.Runtime.Queues.Source.(float64); ok {
+      queueSize += v
+    } else if v, ok :=  pipe.Runtime.Queues.Source.(map[string]interface{}); ok {
+      for _, value := range v {
+        value, ok := value.(float64)
+        if !ok {
+          log.Printf("Err: Failed to read source size. %+v\n", pipe)
+        }
+        queueSize += value
+      }
+    } else {
+      log.Printf("Err: Failed to read source size. %+v\n", pipe)
+    }
+    for _, value := range pipe.Runtime.Queues.Dependencies {
+      queueSize += value
+    }
+
     ch <- prometheus.MustNewConstMetric(
-      pipe_queue_total, prometheus.GaugeValue, volumn, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
+      pipe_queue_total, prometheus.GaugeValue, queueSize, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
     )
     status := "ok"
     if pipe.Runtime.Success == nil {
