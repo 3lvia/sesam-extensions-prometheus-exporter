@@ -183,8 +183,10 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
       pipe_storage_mb, prometheus.GaugeValue, volumn, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
     )
     var queueSize float64
-    if v, ok := pipe.Runtime.Queues.Source.(float64); ok {
-      queueSize += v
+    if pipe.Runtime.Queues.Source == nil {
+      queueSize = 0.0
+    } else  if v, ok := pipe.Runtime.Queues.Source.(float64); ok {
+      queueSize = v
     } else if v, ok :=  pipe.Runtime.Queues.Source.(map[string]interface{}); ok {
       for _, value := range v {
         value, ok := value.(float64)
@@ -203,6 +205,7 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
     ch <- prometheus.MustNewConstMetric(
       pipe_queue_total, prometheus.GaugeValue, queueSize, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
     )
+
     status := "ok"
     if pipe.Runtime.Success == nil {
       status = "ok"
@@ -214,11 +217,12 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
         log.Printf("Error: %s for %s", err, pipe.Id)
       }
       cTime := time.Now()
-      over1h := cTime.Add(1 * time.Hour)
-      over24h := cTime.Add(24 * time.Hour)
-      if over24h.After(nextRun) {
+      over1h := nextRun.Add(1 * time.Hour)
+      over24h := nextRun.Add(24 * time.Hour)
+
+      if cTime.After(over24h) {
         status = "over24h"
-      } else if over1h.After(nextRun) {
+      } else if cTime.After(over1h) {
         status = "over1h"
       }
     }
