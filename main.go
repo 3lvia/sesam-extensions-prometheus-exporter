@@ -52,7 +52,7 @@ type PipeState struct {
     NextRun string `json:"next-run"`
     AverageProcessTime float64 `json:"average-process-time"`
     State string `json:"state"`
-    Success bool `json:"success"`
+    Success *bool `json:"success"`
     DeadletterDataset string `json:"dead-letter-dataset"`
     // last-seen can be int, string, datetime
     LastSeen interface{} `json:"last-seen"`
@@ -176,7 +176,7 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
     volumn := pipe.Storage/1024.0/1024.0
     if pipe.Config.Original.Metadata.ConfigGroup == "" {
       pipe.Config.Original.Metadata.ConfigGroup = "default"
-    } else if pipe.Config.Original.Metadata.ConfigGroup != "maintenance" && pipe.Config.Original.Metadata.ConfigGroup == "kafka" {
+    } else if pipe.Config.Original.Metadata.ConfigGroup != "maintenance" && pipe.Config.Original.Metadata.ConfigGroup != "kafka" {
       pipe.Config.Original.Metadata.ConfigGroup = "private"
     }
     ch <- prometheus.MustNewConstMetric(
@@ -188,7 +188,9 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
       pipe_queue_total, prometheus.GaugeValue, volumn, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
     )
     status := "ok"
-    if pipe.Runtime.Success == false {
+    if pipe.Runtime.Success == nil {
+      status = "ok"
+    } else if *pipe.Runtime.Success == false {
       status = "failed"
     } else if pipe.Runtime.State == "running" && pipe.Runtime.NextRun != "" {
       nextRun, err := time.Parse(time.RFC3339Nano, pipe.Runtime.NextRun)
