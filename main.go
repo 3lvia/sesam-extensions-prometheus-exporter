@@ -42,17 +42,37 @@ type PipeState struct {
     Original struct {
       Metadata struct {
         ConfigGroup string `json:"$config-group"`
+        Durable bool `json:"durable"`
       }`json:"metadata"`
     }`json:"original"`
   }`json:"config"`
+  Runtime struct {
+    LastStarted string`json:"last-started"`
+    LastRun string `json:"last-run"`
+    NextRun string `json:"next-run"`
+    AverageProcessTime float64 `json:"average-process-time"`
+    State string `json:"state"`
+    Success bool `json:"success"`
+    DeadletterDataset string `json:"dead-letter-dataset"`
+    // last-seen can be int, string, datetime
+    LastSeen interface{} `json:"last-seen"`
+    // restore_uuid can be a dict or string
+    RestoreUuid interface{} `json:"restore_uuid"`
+  }`json:"runtime"`
 }
 
 type DatasetState struct {
   Id string `json:"_id"`
   Runtime struct {
+    LastModified time.Time `json:"last-modified"`
+    Queues struct {
+      Source float64 `json:"size"`
+      Index float64 `json:"index"`
+    }`json:"queues"`
     Deleted float64 `json:"count-index-deleted"`
     WithDeleted float64 `json:"count-index-exists"`
     Existed float64 `json:"count-log-exists"`
+    HasCircuitBreaker bool `json:"has-circuit-breaker"`
   }
 }
 
@@ -80,9 +100,11 @@ func NewExport(config ExporterConfig) *Exporter {
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 //   ch <- node_storage_total_mb
   ch <- pipe_storage_mb
-  ch <- output_deleted_total
-  ch <- output_existed_total
-  ch <- output_withdeleted_total
+  ch <- pipe_queue_total
+  ch <- pipe_status_total
+  ch <- dataset_deleted_total
+  ch <- dataset_existed_total
+  ch <- dataset_withdeleted_total
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
@@ -117,9 +139,10 @@ func (e *Exporter) HttpGet(relativeUrl string, client *http.Client, retryCount i
   }
   req.Header.Add("Accept", "application/json")
   req.Header.Add("Authorization", "bearer "+e.jwt)
+  req.Header.Add("accept-encoding", "gzip, deflate, br")
   resp, err := client.Do(req)
   if err != nil {
-    log.Printf("Error to get /pipes. %+v", err)
+    log.Printf("Error to connect %s: %+v", relativeUrl, err)
     time.Sleep(1 * time.Second)
     return e.HttpGet(relativeUrl, client, retryCount+1)
   }
@@ -128,13 +151,13 @@ func (e *Exporter) HttpGet(relativeUrl string, client *http.Client, retryCount i
 
   body, err := ioutil.ReadAll(resp.Body)
   if err != nil {
-    log.Printf("Error to parse response body. %+v", err)
+    log.Printf("Error to parse response body for %s: %+v", relativeUrl, err)
     time.Sleep(1 * time.Second)
     return e.HttpGet(relativeUrl, client, retryCount+1)
   }
 
   if resp.StatusCode != http.StatusOK {
-    log.Printf("Request failed. %+v", string(body))
+    // log.Printf("Request failed. %+v", string(body))
     time.Sleep(1 * time.Second)
     return e.HttpGet(relativeUrl, client, retryCount+1)
   }
@@ -144,11 +167,13 @@ func (e *Exporter) HttpGet(relativeUrl string, client *http.Client, retryCount i
 func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) {
   relativeUrl := "pipes"
   var pipes []PipeState
-  json.Unmarshal(e.HttpGet(relativeUrl, client, 0), &pipes)
-  total := 0.0
+  err := json.Unmarshal(e.HttpGet(relativeUrl, client, 0), &pipes)
+  if err != nil {
+    log.Printf("Error in parsing json from %s: %s", relativeUrl, err)
+  }
+
   for _, pipe := range pipes {
     volumn := pipe.Storage/1024.0/1024.0
-    total += volumn
     if pipe.Config.Original.Metadata.ConfigGroup == "" {
       pipe.Config.Original.Metadata.ConfigGroup = "default"
     } else if pipe.Config.Original.Metadata.ConfigGroup != "maintenance" && pipe.Config.Original.Metadata.ConfigGroup == "kafka" {
@@ -157,31 +182,60 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
     ch <- prometheus.MustNewConstMetric(
       pipe_storage_mb, prometheus.GaugeValue, volumn, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
     )
+    queueSize := 10.0
+    if queueSize == 0 { continue }
+    ch <- prometheus.MustNewConstMetric(
+      pipe_queue_total, prometheus.GaugeValue, volumn, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
+    )
+    status := "ok"
+    if pipe.Runtime.Success == false {
+      status = "failed"
+    } else if pipe.Runtime.State == "running" && pipe.Runtime.NextRun != "" {
+      nextRun, err := time.Parse(time.RFC3339Nano, pipe.Runtime.NextRun)
+      if err != nil {
+        log.Printf("Error: %s for %s", err, pipe.Id)
+      }
+      cTime := time.Now()
+      over1h := cTime.Add(1 * time.Hour)
+      over24h := cTime.Add(24 * time.Hour)
+      if over24h.After(nextRun) {
+        status = "over24h"
+      } else if over1h.After(nextRun) {
+        status = "over1h"
+      }
+    }
+
+    ch <- prometheus.MustNewConstMetric(
+      pipe_status_total, prometheus.CounterValue, 1.0, e.host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup,
+    )
   }
-//  ch <- prometheus.MustNewConstMetric(
-//    node_storage_total_mb, prometheus.GaugeValue, total, e.host,
-//  )
+  log.Printf("Total scraped pipes: %d\n", len(pipes))
   close(ch)
 }
 
 func (e *Exporter) DatasetsState(client *http.Client, ch chan<-prometheus.Metric) {
-  url := fmt.Sprintf("datasets?include-internal-datasets=false")
+  relativeUrl := "datasets?include-internal-datasets=false"
+  url := fmt.Sprintf(relativeUrl)
   var datasetStates []DatasetState
-  json.Unmarshal(e.HttpGet(url, client, 0), &datasetStates)
+  err := json.Unmarshal(e.HttpGet(url, client, 0), &datasetStates)
+  if err != nil {
+    log.Printf("Error in parsing %s, json: %s", relativeUrl,  err)
+  }
   for _, datasetState := range datasetStates {
 //    ch <- prometheus.MustNewConstMetric(
-//      output_undeleted_total, prometheus.GaugeValue, datasetState.Runtime.WithDeleted-datasetState.Runtime.Deleted, e.host, datasetState.Id,
+//      dataset_undeleted_total, prometheus.GaugeValue, datasetState.Runtime.WithDeleted-datasetState.Runtime.Deleted, e.host, datasetState.Id,
 //    )
     ch <- prometheus.MustNewConstMetric(
-      output_deleted_total, prometheus.GaugeValue, datasetState.Runtime.Deleted, e.host, datasetState.Id,
+      dataset_deleted_total, prometheus.GaugeValue, datasetState.Runtime.Deleted, e.host, datasetState.Id,
     )
     ch <- prometheus.MustNewConstMetric(
-      output_withdeleted_total, prometheus.GaugeValue, datasetState.Runtime.WithDeleted, e.host, datasetState.Id,
+      dataset_withdeleted_total, prometheus.GaugeValue, datasetState.Runtime.WithDeleted, e.host, datasetState.Id,
     )
     ch <- prometheus.MustNewConstMetric(
-      output_existed_total, prometheus.GaugeValue, datasetState.Runtime.Existed, e.host, datasetState.Id,
+      dataset_existed_total, prometheus.GaugeValue, datasetState.Runtime.Existed, e.host, datasetState.Id,
     )
   }
+  log.Printf("scraped %d datasets", len(datasetStates))
   close(ch)
 }
 
@@ -199,20 +253,28 @@ var (
     prometheus.BuildFQName(namespace, "",  "pipe_storage_mb"),
     "pipe storage (MB)", []string{"host", "pipe", "configGroup"}, nil,
   )
-  output_deleted_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "output_deleted_total"),
+  pipe_queue_total = prometheus.NewDesc(
+    prometheus.BuildFQName(namespace, "",  "pipe_queues_total"),
+    "pipe queue size", []string{"host", "pipe", "configGroup"}, nil,
+  )
+  pipe_status_total = prometheus.NewDesc(
+    prometheus.BuildFQName(namespace, "",  "pipe_status_total"),
+    "pipe status counter", []string{"host", "pipe", "status", "configGroup"}, nil,
+  )
+  dataset_deleted_total = prometheus.NewDesc(
+    prometheus.BuildFQName(namespace, "",  "dataset_deleted_total"),
     "total deleted entities in the output index", []string{"host", "pipe"}, nil,
   )
-//  output_undeleted_total = prometheus.NewDesc(
-//    prometheus.BuildFQName(namespace, "",  "output_undeleted_total"),
+//  dataset_undeleted_total = prometheus.NewDesc(
+//    prometheus.BuildFQName(namespace, "",  "dataset_undeleted_total"),
 //    "total undeleted entities in the output index", []string{"host", "pipe"}, nil,
 //  )
-  output_withdeleted_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "output_withdeleted_total"),
+  dataset_withdeleted_total = prometheus.NewDesc(
+    prometheus.BuildFQName(namespace, "",  "dataset_withdeleted_total"),
     "total entities in the output index", []string{"host", "pipe"}, nil,
   )
-  output_existed_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "output_existed_total"),
+  dataset_existed_total = prometheus.NewDesc(
+    prometheus.BuildFQName(namespace, "",  "dataset_existed_total"),
     "total existed in the output log", []string{"host", "pipe"}, nil,
   )
 )
