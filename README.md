@@ -4,10 +4,10 @@ Collect metrics from sesam api. This microservice is running in Elvia AKS under 
 ## Metrics
 This microservice is creating these metrics.
 
-| .  | Description|Type| Tags|
-|:---|------------|----|----:|
+|    | Description|Type| Tags|
+|:---|------------|----|-----|
 |api_up|Sesam API path status|Counter|"host", "path", "status"|
-|pipe_storage_mb|pipe storage (MB)|Gauge|"host", "pipe", "configGroup"|
+|pipe_storage_bytes|pipe storage (bytes)|Gauge|"host", "pipe", "configGroup"|
 |pipe_queue_total|pipe queue size|Gauge|"host", "pipe", "configGroup"|
 |pipe_status_total|pipe status|Counter|"host", "pipe", "status", "configGroup"|
 |dataset_deleted_total|total deleted entities in the dataset index|Gauge|"host", "pipe"|
@@ -44,3 +44,6 @@ This microservice is creating these metrics.
     ```
 ## CI/CD
 Azure DevOps. https://dev.azure.com/3lvia/sesam-extensions/_build?definitionId=953&_a=summary
+
+## Vault path
+```sesam-extensions/kv/manual/prometheus-exporter```

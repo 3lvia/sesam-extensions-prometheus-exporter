@@ -148,8 +148,7 @@ func PipesState(client *http.Client) {
     } else if pipe.Config.Original.Metadata.ConfigGroup != "maintenance" && pipe.Config.Original.Metadata.ConfigGroup != "kafka" {
       pipe.Config.Original.Metadata.ConfigGroup = "private"
     }
-    volumn := pipe.Storage/1024.0/1024.0
-    pipe_storage_mb.WithLabelValues(config.SesamConfig.Host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup).Set(volumn)
+    pipe_storage_bytes.WithLabelValues(config.SesamConfig.Host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup).Set(pipe.Storage)
 
     var queueSize float64
     if pipe.Runtime.Queues.Source == nil {
@@ -228,12 +227,12 @@ var (
     },
     []string{"host", "path", "status"},
   )
-  pipe_storage_mb = prometheus.NewGaugeVec(
+  pipe_storage_bytes = prometheus.NewGaugeVec(
     prometheus.GaugeOpts{
       Namespace: namespace,
       Subsystem: "",
-      Name: "pipe_storage_mb",
-      Help: "pipe storage (MB)",
+      Name: "pipe_storage_bytes",
+      Help: "pipe storage (bytes)",
     },
      []string{"host", "pipe", "configGroup"},
   )
@@ -286,7 +285,7 @@ var (
 
 func init() {
   prometheus.MustRegister(api_up)
-  prometheus.MustRegister(pipe_storage_mb)
+  prometheus.MustRegister(pipe_storage_bytes)
   prometheus.MustRegister(pipe_queue_total)
   prometheus.MustRegister(pipe_status_total)
   prometheus.MustRegister(dataset_deleted_total)
