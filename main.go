@@ -13,7 +13,10 @@ import (
   "log"
   "encoding/json"
   "strings"
+  "strconv"
 )
+
+const inteval = 60 * time.Second
 
 type ExporterConfig struct {
   SesamConfig struct {
@@ -76,60 +79,25 @@ type DatasetState struct {
   }
 }
 
-type Exporter struct {
-  host, jwt, description string
-}
-
-// a factory method for Exporter
-func NewExport(config ExporterConfig) *Exporter {
-  if config.SesamConfig.Host == "" {
-    log.Fatal("Missing variable 'host'")
-  }
-  if config.SesamConfig.Desc == "" {
-    log.Fatal("Missing variable 'desc'")
-  }
-
-  return &Exporter{
-    host: config.SesamConfig.Host,
-    description: config.SesamConfig.Desc,
-    jwt: config.SesamConfig.Jwt,
-  }
-}
-
-//send the description of the defined metrics
-func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
-//   ch <- node_storage_total_mb
-  ch <- pipe_storage_mb
-  ch <- pipe_queue_total
-  ch <- pipe_status_total
-  ch <- dataset_deleted_total
-  ch <- dataset_existed_total
-  ch <- dataset_withdeleted_total
-}
-
-func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+func startScrape() {
   client := httpClient()
-  pipeCh := make(chan prometheus.Metric)
-  datasetCh := make(chan prometheus.Metric)
-  go e.PipesState(client, pipeCh)
-  go e.DatasetsState(client, datasetCh)
-  for m := range pipeCh {
-    ch <- m
-  }
-  for m := range datasetCh {
-    ch <- m
+  for {
+    log.Println("ss")
+    go PipesState(client)
+    go DatasetsState(client)
+    time.Sleep(inteval)
   }
 }
 
-func (e *Exporter) HttpGet(relativeUrl string, client *http.Client, retryCount int) []byte  {
+func HttpGet(relativeUrl string, client *http.Client, retryCount int) []byte  {
   if retryCount >= 3 {
     return nil
   }
   var url string
   if strings.HasPrefix(relativeUrl, "/") {
-    url = fmt.Sprintf("https://%s/api%s", e.host, relativeUrl)
+    url = fmt.Sprintf("https://%s/api%s", config.SesamConfig.Host, relativeUrl)
   } else {
-    url = fmt.Sprintf("https://%s/api/%s", e.host, relativeUrl)
+    url = fmt.Sprintf("https://%s/api/%s",config.SesamConfig.Host, relativeUrl)
   }
 
   log.Printf("scraping %s", url)
@@ -138,13 +106,13 @@ func (e *Exporter) HttpGet(relativeUrl string, client *http.Client, retryCount i
     log.Printf("Error to create Request. %+v", err)
   }
   req.Header.Add("Accept", "application/json")
-  req.Header.Add("Authorization", "bearer "+e.jwt)
+  req.Header.Add("Authorization", "bearer "+config.SesamConfig.Jwt)
   req.Header.Add("accept-encoding", "gzip, deflate, br")
   resp, err := client.Do(req)
   if err != nil {
     log.Printf("Error to connect %s: %+v", relativeUrl, err)
     time.Sleep(1 * time.Second)
-    return e.HttpGet(relativeUrl, client, retryCount+1)
+    return HttpGet(relativeUrl, client, retryCount+1)
   }
 
   defer resp.Body.Close()
@@ -152,36 +120,37 @@ func (e *Exporter) HttpGet(relativeUrl string, client *http.Client, retryCount i
   body, err := ioutil.ReadAll(resp.Body)
   if err != nil {
     log.Printf("Error to parse response body for %s: %+v", relativeUrl, err)
+    api_up.WithLabelValues(config.SesamConfig.Host, relativeUrl, "invalidResp").Inc()
     time.Sleep(1 * time.Second)
-    return e.HttpGet(relativeUrl, client, retryCount+1)
+    HttpGet(relativeUrl, client, retryCount+1)
   }
 
+  api_up.WithLabelValues(config.SesamConfig.Host, relativeUrl, strconv.Itoa(resp.StatusCode)).Inc()
   if resp.StatusCode != http.StatusOK {
     // log.Printf("Request failed. %+v", string(body))
     time.Sleep(1 * time.Second)
-    return e.HttpGet(relativeUrl, client, retryCount+1)
+    HttpGet(relativeUrl, client, retryCount+1)
   }
   return body
 }
 
-func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) {
+func PipesState(client *http.Client) {
   relativeUrl := "pipes"
   var pipes []PipeState
-  err := json.Unmarshal(e.HttpGet(relativeUrl, client, 0), &pipes)
+  err := json.Unmarshal(HttpGet(relativeUrl, client, 0), &pipes)
   if err != nil {
     log.Printf("Error in parsing json from %s: %s", relativeUrl, err)
   }
 
   for _, pipe := range pipes {
-    volumn := pipe.Storage/1024.0/1024.0
     if pipe.Config.Original.Metadata.ConfigGroup == "" {
       pipe.Config.Original.Metadata.ConfigGroup = "default"
     } else if pipe.Config.Original.Metadata.ConfigGroup != "maintenance" && pipe.Config.Original.Metadata.ConfigGroup != "kafka" {
       pipe.Config.Original.Metadata.ConfigGroup = "private"
     }
-    ch <- prometheus.MustNewConstMetric(
-      pipe_storage_mb, prometheus.GaugeValue, volumn, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
-    )
+    volumn := pipe.Storage/1024.0/1024.0
+    pipe_storage_mb.WithLabelValues(config.SesamConfig.Host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup).Set(volumn)
+
     var queueSize float64
     if pipe.Runtime.Queues.Source == nil {
       queueSize = 0.0
@@ -201,10 +170,7 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
     for _, value := range pipe.Runtime.Queues.Dependencies {
       queueSize += value
     }
-
-    ch <- prometheus.MustNewConstMetric(
-      pipe_queue_total, prometheus.GaugeValue, queueSize, e.host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup,
-    )
+    pipe_queue_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup).Set(queueSize)
 
     status := "ok"
     if pipe.Runtime.Success == nil {
@@ -226,39 +192,25 @@ func (e *Exporter) PipesState(client *http.Client, ch chan<- prometheus.Metric) 
         status = "over1h"
       }
     }
-
-    ch <- prometheus.MustNewConstMetric(
-      pipe_status_total, prometheus.CounterValue, 1.0, e.host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup,
-    )
+    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup).Inc()
   }
-  log.Printf("Total scraped pipes: %d\n", len(pipes))
-  close(ch)
+  log.Printf("scraped %d pipes...\n", len(pipes))
 }
 
-func (e *Exporter) DatasetsState(client *http.Client, ch chan<-prometheus.Metric) {
+func DatasetsState(client *http.Client) {
   relativeUrl := "datasets?include-internal-datasets=false"
   url := fmt.Sprintf(relativeUrl)
   var datasetStates []DatasetState
-  err := json.Unmarshal(e.HttpGet(url, client, 0), &datasetStates)
+  err := json.Unmarshal(HttpGet(url, client, 0), &datasetStates)
   if err != nil {
     log.Printf("Error in parsing %s, json: %s", relativeUrl,  err)
   }
   for _, datasetState := range datasetStates {
-//    ch <- prometheus.MustNewConstMetric(
-//      dataset_undeleted_total, prometheus.GaugeValue, datasetState.Runtime.WithDeleted-datasetState.Runtime.Deleted, e.host, datasetState.Id,
-//    )
-    ch <- prometheus.MustNewConstMetric(
-      dataset_deleted_total, prometheus.GaugeValue, datasetState.Runtime.Deleted, e.host, datasetState.Id,
-    )
-    ch <- prometheus.MustNewConstMetric(
-      dataset_withdeleted_total, prometheus.GaugeValue, datasetState.Runtime.WithDeleted, e.host, datasetState.Id,
-    )
-    ch <- prometheus.MustNewConstMetric(
-      dataset_existed_total, prometheus.GaugeValue, datasetState.Runtime.Existed, e.host, datasetState.Id,
-    )
+    dataset_deleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Deleted)
+    dataset_withdeleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Deleted)
+    dataset_existed_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Deleted)
   }
-  log.Printf("scraped %d datasets", len(datasetStates))
-  close(ch)
+  log.Printf("scraped %d datasets...", len(datasetStates))
 }
 
 var (
@@ -267,39 +219,80 @@ var (
   namespace = "sesam"
   metricsPath = "/metrics"
 
-//  node_storage_total_mb = prometheus.NewDesc(
-//    prometheus.BuildFQName(namespace, "",  "node_storage_total_mb"),
-//    "total storage (MB)", []string{"host"}, nil,
-//  )
-  pipe_storage_mb = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "pipe_storage_mb"),
-    "pipe storage (MB)", []string{"host", "pipe", "configGroup"}, nil,
+   api_up = prometheus.NewCounterVec(
+    prometheus.CounterOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "api_up",
+      Help: "Seasm API status",
+    },
+    []string{"host", "path", "status"},
   )
-  pipe_queue_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "pipe_queues_total"),
-    "pipe queue size", []string{"host", "pipe", "configGroup"}, nil,
+  pipe_storage_mb = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "pipe_storage_mb",
+      Help: "pipe storage (MB)",
+    },
+     []string{"host", "pipe", "configGroup"},
   )
-  pipe_status_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "pipe_status_total"),
-    "pipe status counter", []string{"host", "pipe", "status", "configGroup"}, nil,
+  pipe_queue_total = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "pipe_queue_total",
+      Help: "pipe queue size",
+    },
+    []string{"host", "pipe", "configGroup"},
   )
-  dataset_deleted_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "dataset_deleted_total"),
-    "total deleted entities in the output index", []string{"host", "pipe"}, nil,
+  pipe_status_total = prometheus.NewCounterVec(
+    prometheus.CounterOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "pipe_status_total",
+      Help: "pipe status counter",
+    },
+    []string{"host", "pipe", "status", "configGroup"},
   )
-//  dataset_undeleted_total = prometheus.NewDesc(
-//    prometheus.BuildFQName(namespace, "",  "dataset_undeleted_total"),
-//    "total undeleted entities in the output index", []string{"host", "pipe"}, nil,
-//  )
-  dataset_withdeleted_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "dataset_withdeleted_total"),
-    "total entities in the output index", []string{"host", "pipe"}, nil,
+  dataset_deleted_total = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "dataset_deleted_total",
+      Help: "total deleted entities in the dataset index",
+    },
+    []string{"host", "pipe"},
   )
-  dataset_existed_total = prometheus.NewDesc(
-    prometheus.BuildFQName(namespace, "",  "dataset_existed_total"),
-    "total existed in the output log", []string{"host", "pipe"}, nil,
+  dataset_withdeleted_total = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "dataset_withdeleted_total",
+      Help: "total entities in the dataset index",
+    },
+    []string{"host", "pipe"},
+  )
+  dataset_existed_total = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "dataset_existed_total",
+      Help: "total existed in the dataset log",
+    },
+    []string{"host", "pipe"},
   )
 )
+
+func init() {
+  prometheus.MustRegister(api_up)
+  prometheus.MustRegister(pipe_storage_mb)
+  prometheus.MustRegister(pipe_queue_total)
+  prometheus.MustRegister(pipe_status_total)
+  prometheus.MustRegister(dataset_deleted_total)
+  prometheus.MustRegister(dataset_existed_total)
+  prometheus.MustRegister(dataset_withdeleted_total)
+}
 
 func main() {
   var configFile string
@@ -346,9 +339,7 @@ func main() {
     log.Fatal("HOST_Jwt is not defined...")
   }
   log.Printf("start with %s(%s)\n", config.SesamConfig.Desc, config.SesamConfig.Host)
-
-  exporter := NewExport(config)
-  prometheus.MustRegister(exporter)
+  go startScrape()
 
   http.Handle("/metrics", promhttp.Handler())
   http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
