@@ -16,7 +16,7 @@ import (
   "strconv"
 )
 
-const inteval = 60 * time.Second
+const inteval = 30 * time.Second
 
 type ExporterConfig struct {
   SesamConfig struct {
@@ -81,16 +81,22 @@ type DatasetState struct {
 
 func startScrape() {
   client := httpClient()
+  var pipeStates []PipeState
   for {
-    log.Println("ss")
-    go PipesState(client)
+    pipeChan := make(chan PipeState)
+    go PipesState(client, pipeStates, pipeChan)
     go DatasetsState(client)
+    pipeStates = nil
+    for ps := range pipeChan{
+      pipeStates = append(pipeStates, ps)
+    }
     time.Sleep(inteval)
   }
 }
 
 func HttpGet(relativeUrl string, client *http.Client, retryCount int) []byte  {
   if retryCount >= 3 {
+    api_up.WithLabelValues(config.SesamConfig.Host, relativeUrl, "error").Inc()
     return nil
   }
   var url string
@@ -120,29 +126,34 @@ func HttpGet(relativeUrl string, client *http.Client, retryCount int) []byte  {
   body, err := ioutil.ReadAll(resp.Body)
   if err != nil {
     log.Printf("Error to parse response body for %s: %+v", relativeUrl, err)
-    api_up.WithLabelValues(config.SesamConfig.Host, relativeUrl, "invalidResp").Inc()
-    time.Sleep(1 * time.Second)
+    time.Sleep(2 * time.Second)
     HttpGet(relativeUrl, client, retryCount+1)
   }
 
   api_up.WithLabelValues(config.SesamConfig.Host, relativeUrl, strconv.Itoa(resp.StatusCode)).Inc()
   if resp.StatusCode != http.StatusOK {
     // log.Printf("Request failed. %+v", string(body))
-    time.Sleep(1 * time.Second)
+    time.Sleep(2 * time.Second)
     HttpGet(relativeUrl, client, retryCount+1)
   }
   return body
 }
 
-func PipesState(client *http.Client) {
+func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
   relativeUrl := "pipes"
   var pipes []PipeState
   err := json.Unmarshal(HttpGet(relativeUrl, client, 0), &pipes)
   if err != nil {
     log.Printf("Error in parsing json from %s: %s", relativeUrl, err)
+    api_up.WithLabelValues(config.SesamConfig.Host, relativeUrl, "error").Inc()
+  }
+
+  if len(pipes) == 0 {
+    pipes = oldStates
   }
 
   for _, pipe := range pipes {
+    ch <- pipe
     if pipe.Config.Original.Metadata.ConfigGroup == "" {
       pipe.Config.Original.Metadata.ConfigGroup = "default"
     } else if pipe.Config.Original.Metadata.ConfigGroup != "maintenance" && pipe.Config.Original.Metadata.ConfigGroup != "kafka" {
@@ -194,6 +205,7 @@ func PipesState(client *http.Client) {
     pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup).Inc()
   }
   log.Printf("scraped %d pipes...\n", len(pipes))
+  close(ch)
 }
 
 func DatasetsState(client *http.Client) {
