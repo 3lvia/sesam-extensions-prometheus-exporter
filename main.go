@@ -218,8 +218,8 @@ func DatasetsState(client *http.Client) {
   }
   for _, datasetState := range datasetStates {
     dataset_deleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Deleted)
-    dataset_withdeleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Deleted)
-    dataset_existed_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Deleted)
+    dataset_withdeleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.WithDeleted)
+    dataset_existed_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Existed)
   }
   log.Printf("scraped %d datasets...", len(datasetStates))
 }
