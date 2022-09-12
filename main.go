@@ -84,13 +84,19 @@ type DatasetState struct {
 func startScrape() {
   client := httpClient()
   var pipeStates []PipeState
+  var datasetStates []DatasetState
   for {
     pipeChan := make(chan PipeState)
+    datasetChan := make(chan DatasetState)
     go PipesState(client, pipeStates, pipeChan)
-    go DatasetsState(client)
+    go DatasetsState(client, datasetStates, datasetChan)
     pipeStates = nil
+    datasetStates = nil
     for ps := range pipeChan{
       pipeStates = append(pipeStates, ps)
+    }
+    for ds := range datasetChan{
+      datasetStates = append(datasetStates, ds)
     }
     time.Sleep(inteval)
   }
@@ -216,7 +222,7 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
   close(ch)
 }
 
-func DatasetsState(client *http.Client) {
+func DatasetsState(client *http.Client, oldStates []DatasetState, ch chan DatasetState) {
   relativeUrl := "datasets"
   url := fmt.Sprintf(relativeUrl)
   var datasetStates []DatasetState
@@ -224,17 +230,24 @@ func DatasetsState(client *http.Client) {
   if err != nil {
     log.Printf("Error in parsing %s, json: %s", relativeUrl,  err)
   }
+
+  if len(datasetStates) == 0 {
+    datasetStates = oldStates
+  }
+
   s := 0
   for _, datasetState := range datasetStates {
     if datasetState.Runtime.Origin != "user" && !strings.HasPrefix(datasetState.Id, "system:dead-letter") {
       continue
     }
     s++
+    ch <- datasetState
     dataset_deleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Deleted)
     dataset_withdeleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.WithDeleted)
     dataset_existed_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Existed)
   }
   log.Printf("scraped %d/%d datasets...", s, len(datasetStates))
+  close(ch)
 }
 
 var (
