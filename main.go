@@ -65,6 +65,7 @@ type PipeState struct {
     LastSeen interface{} `json:"last-seen"`
     // restore_uuid can be a dict or string
     RestoreUuid interface{} `json:"restore_uuid"`
+    Origin string `json:"origin"`
   }`json:"runtime"`
 }
 
@@ -76,6 +77,7 @@ type DatasetState struct {
     WithDeleted float64 `json:"count-index-exists"`
     Existed float64 `json:"count-log-exists"`
     HasCircuitBreaker bool `json:"has-circuit-breaker"`
+    Origin string `json:"origin"`
   }`json:"runtime"`
 }
 
@@ -152,7 +154,13 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
     pipes = oldStates
   }
 
+  s := 0
+
   for _, pipe := range pipes {
+    if pipe.Runtime.Origin != "user" {
+      continue
+    }
+    s++
     ch <- pipe
     if pipe.Config.Original.Metadata.ConfigGroup == "" {
       pipe.Config.Original.Metadata.ConfigGroup = "default"
@@ -204,24 +212,29 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
     }
     pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup).Inc()
   }
-  log.Printf("scraped %d pipes...\n", len(pipes))
+  log.Printf("scraped %d/%d user pipes...\n", s, len(pipes))
   close(ch)
 }
 
 func DatasetsState(client *http.Client) {
-  relativeUrl := "datasets?include-internal-datasets=false"
+  relativeUrl := "datasets"
   url := fmt.Sprintf(relativeUrl)
   var datasetStates []DatasetState
   err := json.Unmarshal(HttpGet(url, client, 0), &datasetStates)
   if err != nil {
     log.Printf("Error in parsing %s, json: %s", relativeUrl,  err)
   }
+  s := 0
   for _, datasetState := range datasetStates {
+    if datasetState.Runtime.Origin != "user" && !strings.HasPrefix(datasetState.Id, "system:dead-letter") {
+      continue
+    }
+    s++
     dataset_deleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Deleted)
     dataset_withdeleted_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.WithDeleted)
     dataset_existed_total.WithLabelValues(config.SesamConfig.Host, datasetState.Id).Set(datasetState.Runtime.Existed)
   }
-  log.Printf("scraped %d datasets...", len(datasetStates))
+  log.Printf("scraped %d/%d datasets...", s, len(datasetStates))
 }
 
 var (
