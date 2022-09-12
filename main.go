@@ -76,7 +76,7 @@ type DatasetState struct {
     WithDeleted float64 `json:"count-index-exists"`
     Existed float64 `json:"count-log-exists"`
     HasCircuitBreaker bool `json:"has-circuit-breaker"`
-  }
+  }`json:"runtime"`
 }
 
 func startScrape() {
