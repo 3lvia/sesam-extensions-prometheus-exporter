@@ -6,12 +6,13 @@ import (
   "github.com/3lvia/hn-config-lib-go/vault"
   "fmt"
   "flag"
-  "io/ioutil"
+  "io"
   "net/http"
   "os"
   "time"
   "log"
   "encoding/json"
+  "compress/gzip"
   "strings"
   "strconv"
 )
@@ -134,20 +135,37 @@ func HttpGet(relativeUrl string, client *http.Client, retryCount int) []byte  {
 
   defer resp.Body.Close()
 
-  body, err := ioutil.ReadAll(resp.Body)
-  if err != nil {
-    log.Printf("Error to parse response body for %s: %+v", relativeUrl, err)
-    time.Sleep(2 * time.Second)
-    HttpGet(relativeUrl, client, retryCount+1)
-  }
-
-  api_up.WithLabelValues(config.SesamConfig.Host, relativeUrl, strconv.Itoa(resp.StatusCode)).Inc()
   if resp.StatusCode != http.StatusOK {
     // log.Printf("Request failed. %+v", string(body))
     time.Sleep(2 * time.Second)
     HttpGet(relativeUrl, client, retryCount+1)
   }
-  return body
+
+  if resp.Header.Get("Content-Encoding") == "gzip" {
+    reader, err := gzip.NewReader(resp.Body)
+    if err != nil {
+      log.Printf("Error to parse gzip response body for %s: %+v", relativeUrl, err)
+      time.Sleep(2 * time.Second)
+      HttpGet(relativeUrl, client, retryCount+1)
+    }
+    body, err := io.ReadAll(reader)
+    if err != nil {
+      log.Printf("Error to decompress response body: %+v", err)
+    }
+    return body
+  } else {
+    body, err := io.ReadAll(resp.Body)
+
+    if err != nil {
+      log.Printf("Error to parse response body for %s: %+v", relativeUrl, err)
+      time.Sleep(2 * time.Second)
+      HttpGet(relativeUrl, client, retryCount+1)
+    }
+
+    api_up.WithLabelValues(config.SesamConfig.Host, relativeUrl, strconv.Itoa(resp.StatusCode)).Inc()
+
+    return body
+  }
 }
 
 func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
@@ -346,7 +364,7 @@ func main() {
 
   if configFile != "" {
     var b []byte
-    b, err :=ioutil.ReadFile(configFile)
+    b, err := os.ReadFile(configFile)
     if err != nil {
       log.Fatalf("Failed to read config file: %s", err)
     }
