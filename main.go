@@ -54,7 +54,10 @@ type PipeState struct {
       Source interface{} `json:"source"`
       Dependencies map[string]float64 `json:"dependencies"`
     }`json:"queues"`
-    LastStarted string`json:"last-started"`
+    LastStarted string `json:"last-started"`
+    IsRunning bool`json:"is-running"`
+    IsDisabled bool`json:"is-disabled"`
+    CurrentTime string `json:"current-time"`
     LastRun string `json:"last-run"`
     NextRun string `json:"next-run"`
     AverageProcessTime float64 `json:"average-process-time"`
@@ -148,7 +151,7 @@ func HttpGet(relativeUrl string, client *http.Client, retryCount int) []byte  {
 }
 
 func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
-  relativeUrl := "pipes"
+  relativeUrl := "pipes?include-internal-pipes=false"  // ?include-internal-pipes=false to not get ALL pipes
   var pipes []PipeState
   err := json.Unmarshal(HttpGet(relativeUrl, client, 0), &pipes)
   if err != nil {
@@ -170,8 +173,6 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
     ch <- pipe
     if pipe.Config.Original.Metadata.ConfigGroup == "" {
       pipe.Config.Original.Metadata.ConfigGroup = "default"
-    } else if pipe.Config.Original.Metadata.ConfigGroup != "maintenance" && pipe.Config.Original.Metadata.ConfigGroup != "kafka" {
-      pipe.Config.Original.Metadata.ConfigGroup = "private"
     }
     pipe_storage_bytes.WithLabelValues(config.SesamConfig.Host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup).Set(pipe.Storage)
 
@@ -216,7 +217,7 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
         status = "over1h"
       }
     }
-    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup).Inc()
+    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup, pipe.Runtime.LastStarted, strconv.FormatBool(pipe.Runtime.IsRunning), strconv.FormatBool(pipe.Runtime.IsDisabled), pipe.Runtime.State, pipe.Runtime.CurrentTime).Inc()
   }
   log.Printf("scraped %d/%d user pipes...\n", s, len(pipes))
   close(ch)
@@ -290,8 +291,13 @@ var (
       Name: "pipe_status_total",
       Help: "pipe status counter",
     },
-    []string{"host", "pipe", "status", "configGroup"},
+    []string{"host", "pipe", "status", "configGroup", "laststarted", "isrunning", "isdisabled", "state", "currenttime"},
   )
+// Example data 
+//   "last-started": "2023-01-27T11:42:36.601550+00:00",
+// "is-running": true,
+// "is-disabled": false,
+// "state": "running"
   dataset_deleted_total = prometheus.NewGaugeVec(
     prometheus.GaugeOpts{
       Namespace: namespace,
