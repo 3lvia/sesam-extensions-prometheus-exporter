@@ -220,23 +220,34 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
       status = "ok"
     } else if *pipe.Runtime.Success == false {
       status = "failed"
-    } else if pipe.Runtime.State == "running" && pipe.Runtime.NextRun != "" {
-      nextRun, err := time.Parse(time.RFC3339Nano, pipe.Runtime.NextRun)
+    } else if pipe.Runtime.IsRunning {
+      lastStarted, err := time.Parse(time.RFC3339Nano, pipe.Runtime.LastStarted)
       if err != nil {
         log.Printf("Error: %s for %s", err, pipe.Id)
       }
-      cTime := time.Now()
-      over1h := nextRun.Add(1 * time.Hour)
-      over24h := nextRun.Add(24 * time.Hour)
+      cTime, err := time.Parse(time.RFC3339Nano, pipe.Runtime.CurrentTime)
+      if err != nil {
+        log.Printf("Error: %s for %s", err, pipe.Id)
+      }
 
-      if cTime.After(over24h) {
+      runtime := cTime.Sub(lastStarted)
+
+//      log.Printf("Debug runtime %s: %f ...\n", pipe.Id, runtime.Hours() )
+
+      if runtime.Hours() > 24 {
         status = "over24h"
-      } else if cTime.After(over1h) {
+      } else if runtime.Hours() > 12 {
+        status = "over12h"
+      } else if runtime.Hours() > 6 {
+        status = "over6h"
+      } else if runtime.Hours() > 1 {
         status = "over1h"
       }
     }
-    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup, pipe.Runtime.LastStarted, strconv.FormatBool(pipe.Runtime.IsRunning), strconv.FormatBool(pipe.Runtime.IsDisabled), pipe.Runtime.State, pipe.Runtime.CurrentTime).Inc()
+    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup, strconv.FormatBool(pipe.Runtime.IsRunning), strconv.FormatBool(pipe.Runtime.IsDisabled), pipe.Runtime.State).Inc()
+    //                                                  "host", "pipe", "status", "configGroup",                           "isrunning",                               "isdisabled",                               "state"
   }
+
   log.Printf("scraped %d/%d user pipes...\n", s, len(pipes))
   close(ch)
 }
@@ -309,13 +320,9 @@ var (
       Name: "pipe_status_total",
       Help: "pipe status counter",
     },
-    []string{"host", "pipe", "status", "configGroup", "laststarted", "isrunning", "isdisabled", "state", "currenttime"},
+    []string{"host", "pipe", "status", "configGroup", "isrunning", "isdisabled", "state"},
   )
-// Example data 
-//   "last-started": "2023-01-27T11:42:36.601550+00:00",
-// "is-running": true,
-// "is-disabled": false,
-// "state": "running"
+
   dataset_deleted_total = prometheus.NewGaugeVec(
     prometheus.GaugeOpts{
       Namespace: namespace,
