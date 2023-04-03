@@ -9,7 +9,7 @@ This microservice is creating these metrics.
 |api_up|Sesam API path status|Counter|"host", "path", "status"|
 |pipe_storage_bytes|pipe storage (bytes)|Gauge|"host", "pipe", "configGroup"|
 |pipe_queue_total|pipe queue size|Gauge|"host", "pipe", "configGroup"|
-|pipe_status_total|pipe status|Counter|"host", "pipe", "status", "configGroup"|
+|pipe_status_total|pipe status|Counter|"host", "pipe", "status", "configGroup", "isrunning", "isdisabled", "state"|
 |dataset_deleted_total|total deleted entities in the dataset index|Gauge|"host", "pipe"|
 |dataset_withdeleted_total|total entities in the dataset index|Gauge|"host", "pipe"|
 |dataset_existed_total|total existed in the dataset log|Gauge|"host", "pipe"|

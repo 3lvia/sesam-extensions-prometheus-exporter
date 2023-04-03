@@ -1,0 +1,15 @@
+version: '3'
+services:
+  sesam-p-exporter:
+    build: .
+    image: mofsesam/sesam-p-exporter:latest
+    ports:
+    - "8080:8080"
+    environment:
+      LOG_LEVEL: "DEBUG"
+      PORT: "8080"
+      SESAM_HOST: ${SESAM_HOST}
+      HOST_DESC: ${HOST_DESC}
+      HOST_JWT: ${HOST_JWT}
+    command: "-config.env"
+

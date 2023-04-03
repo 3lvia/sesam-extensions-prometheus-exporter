@@ -55,7 +55,10 @@ type PipeState struct {
       Source interface{} `json:"source"`
       Dependencies map[string]float64 `json:"dependencies"`
     }`json:"queues"`
-    LastStarted string`json:"last-started"`
+    LastStarted string `json:"last-started"`
+    IsRunning bool`json:"is-running"`
+    IsDisabled bool`json:"is-disabled"`
+    CurrentTime string `json:"current-time"`
     LastRun string `json:"last-run"`
     NextRun string `json:"next-run"`
     AverageProcessTime float64 `json:"average-process-time"`
@@ -166,7 +169,7 @@ func HttpGet(relativeUrl string, client *http.Client, retryCount int) []byte  {
 }
 
 func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
-  relativeUrl := "pipes"
+  relativeUrl := "pipes?include-internal-pipes=false"  // ?include-internal-pipes=false to not get ALL pipes
   var pipes []PipeState
   err := json.Unmarshal(HttpGet(relativeUrl, client, 0), &pipes)
   if err != nil {
@@ -188,8 +191,6 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
     ch <- pipe
     if pipe.Config.Original.Metadata.ConfigGroup == "" {
       pipe.Config.Original.Metadata.ConfigGroup = "default"
-    } else if pipe.Config.Original.Metadata.ConfigGroup != "maintenance" && pipe.Config.Original.Metadata.ConfigGroup != "kafka" {
-      pipe.Config.Original.Metadata.ConfigGroup = "private"
     }
     pipe_storage_bytes.WithLabelValues(config.SesamConfig.Host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup).Set(pipe.Storage)
 
@@ -219,23 +220,34 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
       status = "ok"
     } else if *pipe.Runtime.Success == false {
       status = "failed"
-    } else if pipe.Runtime.State == "running" && pipe.Runtime.NextRun != "" {
-      nextRun, err := time.Parse(time.RFC3339Nano, pipe.Runtime.NextRun)
+    } else if pipe.Runtime.IsRunning {
+      lastStarted, err := time.Parse(time.RFC3339Nano, pipe.Runtime.LastStarted)
       if err != nil {
         log.Printf("Error: %s for %s", err, pipe.Id)
       }
-      cTime := time.Now()
-      over1h := nextRun.Add(1 * time.Hour)
-      over24h := nextRun.Add(24 * time.Hour)
+      cTime, err := time.Parse(time.RFC3339Nano, pipe.Runtime.CurrentTime)
+      if err != nil {
+        log.Printf("Error: %s for %s", err, pipe.Id)
+      }
 
-      if cTime.After(over24h) {
+      runtime := cTime.Sub(lastStarted)
+
+//      log.Printf("Debug runtime %s: %f ...\n", pipe.Id, runtime.Hours() )
+
+      if runtime.Hours() > 24 {
         status = "over24h"
-      } else if cTime.After(over1h) {
+      } else if runtime.Hours() > 12 {
+        status = "over12h"
+      } else if runtime.Hours() > 6 {
+        status = "over6h"
+      } else if runtime.Hours() > 1 {
         status = "over1h"
       }
     }
-    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup).Inc()
+    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup, strconv.FormatBool(pipe.Runtime.IsRunning), strconv.FormatBool(pipe.Runtime.IsDisabled), pipe.Runtime.State).Inc()
+    //                                                  "host", "pipe", "status", "configGroup",                           "isrunning",                               "isdisabled",                               "state"
   }
+
   log.Printf("scraped %d/%d user pipes...\n", s, len(pipes))
   close(ch)
 }
@@ -308,8 +320,9 @@ var (
       Name: "pipe_status_total",
       Help: "pipe status counter",
     },
-    []string{"host", "pipe", "status", "configGroup"},
+    []string{"host", "pipe", "status", "configGroup", "isrunning", "isdisabled", "state"},
   )
+
   dataset_deleted_total = prometheus.NewGaugeVec(
     prometheus.GaugeOpts{
       Namespace: namespace,
