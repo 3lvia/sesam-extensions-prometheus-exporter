@@ -1,23 +1,101 @@
 package main
 
 import (
-  "github.com/prometheus/client_golang/prometheus"
-  "github.com/prometheus/client_golang/prometheus/promhttp"
-  "github.com/3lvia/hn-config-lib-go/vault"
-  "fmt"
-  "flag"
-  "io"
-  "net/http"
-  "os"
-  "time"
-  "log"
-  "encoding/json"
-  "compress/gzip"
-  "strings"
-  "strconv"
+	"compress/gzip"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/3lvia/hn-config-lib-go/vault"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 )
 
 const inteval = 30 * time.Second
+
+var (
+  config ExporterConfig
+
+  namespace = "sesam"
+  metricsPath = "/metrics"
+  client = httpClient()
+
+  registry = prometheus.NewRegistry()
+
+  api_up = prometheus.NewCounterVec(
+    prometheus.CounterOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "api_up",
+      Help: "Seasm API status",
+    },
+    []string{"host", "path", "status"},
+  )
+  pipe_storage_bytes = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "pipe_storage_bytes",
+      Help: "pipe storage (bytes)",
+    },
+     []string{"host", "pipe", "configGroup"},
+  )
+  pipe_queue_total = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "pipe_queue_total",
+      Help: "pipe queue size",
+    },
+    []string{"host", "pipe", "configGroup"},
+  )
+  pipe_status_total = prometheus.NewCounterVec(
+    prometheus.CounterOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "pipe_status_total",
+      Help: "pipe status counter",
+    },
+    []string{"host", "pipe", "status", "configGroup", "runningtime", "isdisabled", "state"},
+  )
+
+  dataset_deleted_total = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "dataset_deleted_total",
+      Help: "total deleted entities in the dataset index",
+    },
+    []string{"host", "pipe"},
+  )
+  dataset_withdeleted_total = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "dataset_withdeleted_total",
+      Help: "total entities in the dataset index",
+    },
+    []string{"host", "pipe"},
+  )
+  dataset_existed_total = prometheus.NewGaugeVec(
+    prometheus.GaugeOpts{
+      Namespace: namespace,
+      Subsystem: "",
+      Name: "dataset_existed_total",
+      Help: "total existed in the dataset log",
+    },
+    []string{"host", "pipe"},
+  )
+)
 
 type ExporterConfig struct {
   SesamConfig struct {
@@ -86,7 +164,6 @@ type DatasetState struct {
 }
 
 func startScrape() {
-  client := httpClient()
   var pipeStates []PipeState
   var datasetStates []DatasetState
   for {
@@ -123,7 +200,9 @@ func HttpGet(relativeUrl string, client *http.Client, retryCount int) []byte  {
   if err != nil {
     log.Printf("Error to create Request. %+v", err)
   }
-  req.Header.Add("Accept", "application/json")
+
+  req.Header.Add("Accept", "application/json, text/plain")
+
   req.Header.Add("Authorization", "bearer "+config.SesamConfig.Jwt)
   req.Header.Add("accept-encoding", "gzip, deflate, br")
   resp, err := client.Do(req)
@@ -280,87 +359,30 @@ func DatasetsState(client *http.Client, oldStates []DatasetState, ch chan Datase
   close(ch)
 }
 
-var (
-  config ExporterConfig
-
-  namespace = "sesam"
-  metricsPath = "/metrics"
-
-   api_up = prometheus.NewCounterVec(
-    prometheus.CounterOpts{
-      Namespace: namespace,
-      Subsystem: "",
-      Name: "api_up",
-      Help: "Seasm API status",
-    },
-    []string{"host", "path", "status"},
-  )
-  pipe_storage_bytes = prometheus.NewGaugeVec(
-    prometheus.GaugeOpts{
-      Namespace: namespace,
-      Subsystem: "",
-      Name: "pipe_storage_bytes",
-      Help: "pipe storage (bytes)",
-    },
-     []string{"host", "pipe", "configGroup"},
-  )
-  pipe_queue_total = prometheus.NewGaugeVec(
-    prometheus.GaugeOpts{
-      Namespace: namespace,
-      Subsystem: "",
-      Name: "pipe_queue_total",
-      Help: "pipe queue size",
-    },
-    []string{"host", "pipe", "configGroup"},
-  )
-  pipe_status_total = prometheus.NewCounterVec(
-    prometheus.CounterOpts{
-      Namespace: namespace,
-      Subsystem: "",
-      Name: "pipe_status_total",
-      Help: "pipe status counter",
-    },
-    []string{"host", "pipe", "status", "configGroup", "isrunning", "isdisabled", "state"},
-  )
-
-  dataset_deleted_total = prometheus.NewGaugeVec(
-    prometheus.GaugeOpts{
-      Namespace: namespace,
-      Subsystem: "",
-      Name: "dataset_deleted_total",
-      Help: "total deleted entities in the dataset index",
-    },
-    []string{"host", "pipe"},
-  )
-  dataset_withdeleted_total = prometheus.NewGaugeVec(
-    prometheus.GaugeOpts{
-      Namespace: namespace,
-      Subsystem: "",
-      Name: "dataset_withdeleted_total",
-      Help: "total entities in the dataset index",
-    },
-    []string{"host", "pipe"},
-  )
-  dataset_existed_total = prometheus.NewGaugeVec(
-    prometheus.GaugeOpts{
-      Namespace: namespace,
-      Subsystem: "",
-      Name: "dataset_existed_total",
-      Help: "total existed in the dataset log",
-    },
-    []string{"host", "pipe"},
-  )
-)
-
 func init() {
-  prometheus.MustRegister(api_up)
-  prometheus.MustRegister(pipe_storage_bytes)
-  prometheus.MustRegister(pipe_queue_total)
-  prometheus.MustRegister(pipe_status_total)
-  prometheus.MustRegister(dataset_deleted_total)
-  prometheus.MustRegister(dataset_existed_total)
-  prometheus.MustRegister(dataset_withdeleted_total)
+  registry.MustRegister(api_up)
+  registry.MustRegister(pipe_storage_bytes)
+  registry.MustRegister(pipe_queue_total)
+  registry.MustRegister(pipe_status_total)
+  registry.MustRegister(dataset_deleted_total)
+  registry.MustRegister(dataset_existed_total)
+  registry.MustRegister(dataset_withdeleted_total)
 }
+
+func parseText() ([]*dto.MetricFamily, error) {
+  var parser expfmt.TextParser
+  text := string(HttpGet("metrics", client, 0))
+  // log.Print(text)
+	parsed, err := parser.TextToMetricFamilies(strings.NewReader(text))
+		if err != nil {
+			return nil, err
+		}
+		var result []*dto.MetricFamily
+		for _, mf := range parsed {
+			result = append(result, mf)
+		}
+		return result, nil
+	}
 
 func main() {
   var configFile string
@@ -407,9 +429,15 @@ func main() {
     log.Fatal("HOST_Jwt is not defined...")
   }
   log.Printf("start with %s(%s)\n", config.SesamConfig.Desc, config.SesamConfig.Host)
+
+  gatherers := prometheus.Gatherers{
+    registry,
+    prometheus.GathererFunc(parseText),
+  }
+
   go startScrape()
 
-  http.Handle("/metrics", promhttp.Handler())
+  http.Handle("/metrics", promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}))
   http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
     w.Write([]byte(`
       <html>
