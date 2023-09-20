@@ -12,7 +12,7 @@ RUN go mod download \
     -o ./out/prometheus-sesam-exporter
 
 
-FROM library/alpine:3.14 as runtime
+FROM library/alpine:3 as runtime
 LABEL maintainer="feng.luan@elvia.no"
 
 RUN addgroup application-group --gid 1001 \
