@@ -1,3 +1,4 @@
+
 trigger:
   - '*'
 
@@ -51,16 +52,6 @@ stages:
       environment: test
       name: prometheus-exporter
       helmValuesFile: values_prometheus-exporter_test.yaml
-
-- stage: DeployDvTest
-  dependsOn: DeployDev
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/trunk'))
-  jobs:
-  - template: deploy.yaml@templates
-    parameters:
-      environment: dvtest
-      name: prometheus-exporter
-      helmValuesFile: values_prometheus-exporter_dvtest.yaml
 
 - stage: DeployProd
   dependsOn: DeployTest
