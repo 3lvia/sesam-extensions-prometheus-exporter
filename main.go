@@ -1,20 +1,21 @@
 package main
 
 import (
-  "github.com/prometheus/client_golang/prometheus"
-  "github.com/prometheus/client_golang/prometheus/promhttp"
-  "github.com/3lvia/hn-config-lib-go/vault"
-  "fmt"
-  "flag"
-  "io"
-  "net/http"
-  "os"
-  "time"
-  "log"
-  "encoding/json"
-  "compress/gzip"
-  "strings"
-  "strconv"
+	"compress/gzip"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/3lvia/hn-config-lib-go/vault"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const inteval = 30 * time.Second
@@ -216,11 +217,14 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
     pipe_queue_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, pipe.Config.Original.Metadata.ConfigGroup).Set(queueSize)
 
     status := "ok"
-    if pipe.Runtime.Success == nil {
-      status = "ok"
-    } else if *pipe.Runtime.Success == false {
+    if pipe.Runtime.Success == nil { // will be the case for http source pipes, E.g. kafka RAW pipes
+      status = "unknown"
+    } else if !*pipe.Runtime.Success { // failed last run
       status = "failed"
-    } else if pipe.Runtime.IsRunning {
+    }
+    
+    runningtime := "not_running"
+    if pipe.Runtime.IsRunning {
       lastStarted, err := time.Parse(time.RFC3339Nano, pipe.Runtime.LastStarted)
       if err != nil {
         log.Printf("Error: %s for %s", err, pipe.Id)
@@ -232,20 +236,27 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
 
       runtime := cTime.Sub(lastStarted)
 
-//      log.Printf("Debug runtime %s: %f ...\n", pipe.Id, runtime.Hours() )
-
       if runtime.Hours() > 24 {
-        status = "over24h"
+        runningtime = "over24h"
       } else if runtime.Hours() > 12 {
-        status = "over12h"
+        runningtime = "over12h"
       } else if runtime.Hours() > 6 {
-        status = "over6h"
+        runningtime = "over6h"
       } else if runtime.Hours() > 1 {
-        status = "over1h"
+        runningtime = "over1h"
+      } else if runtime.Minutes() > 30 {
+        runningtime = "over30m"
+      } else if runtime.Minutes() > 15 {
+        runningtime = "over15m"
+      } else if runtime.Minutes() > 10 {
+        runningtime = "over10m"
+      } else {
+        runningtime = "less10m"
       }
     }
-    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup, strconv.FormatBool(pipe.Runtime.IsRunning), strconv.FormatBool(pipe.Runtime.IsDisabled), pipe.Runtime.State).Inc()
-    //                                                  "host", "pipe", "status", "configGroup",                           "isrunning",                               "isdisabled",                               "state"
+
+    pipe_status_total.WithLabelValues(config.SesamConfig.Host, pipe.Id, status, pipe.Config.Original.Metadata.ConfigGroup, runningtime, strconv.FormatBool(pipe.Runtime.IsDisabled), pipe.Runtime.State).Inc()
+    //                                                  "host", "pipe", "status", "configGroup",                           "runningtime","isdisabled",                               "state"
   }
 
   log.Printf("scraped %d/%d user pipes...\n", s, len(pipes))
@@ -254,7 +265,7 @@ func PipesState(client *http.Client, oldStates []PipeState, ch chan PipeState) {
 
 func DatasetsState(client *http.Client, oldStates []DatasetState, ch chan DatasetState) {
   relativeUrl := "datasets"
-  url := fmt.Sprintf(relativeUrl)
+  url := fmt.Sprint(relativeUrl)
   var datasetStates []DatasetState
   err := json.Unmarshal(HttpGet(url, client, 0), &datasetStates)
   if err != nil {
@@ -320,7 +331,7 @@ var (
       Name: "pipe_status_total",
       Help: "pipe status counter",
     },
-    []string{"host", "pipe", "status", "configGroup", "isrunning", "isdisabled", "state"},
+    []string{"host", "pipe", "status", "configGroup", "runningtime", "isdisabled", "state"},
   )
 
   dataset_deleted_total = prometheus.NewGaugeVec(
@@ -389,7 +400,7 @@ func main() {
     config.SesamConfig.Host = secretsDep.Host()
     config.SesamConfig.Desc = secretsDep.Desc()
     config.SesamConfig.Jwt = secretsDep.Jwt()
-  } else if *envv == true {
+  } else if *envv {
     config.SesamConfig.Host = os.Getenv("SESAM_HOST")
     config.SesamConfig.Desc = os.Getenv("HOST_DESC")
     config.SesamConfig.Jwt = os.Getenv("HOST_JWT")
